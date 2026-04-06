@@ -25,3 +25,11 @@ jobs:
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
         run: python alerta_bpo.py
+
+      - name: Salvar histórico no GitHub
+        run: |
+          git config --global user.name "bot"
+          git config --global user.email "bot@github.com"
+          git add enviados.csv
+          git commit -m "Atualiza histórico" || echo "Sem mudanças"
+          git push
