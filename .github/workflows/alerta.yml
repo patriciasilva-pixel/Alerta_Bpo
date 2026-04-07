@@ -33,3 +33,8 @@ jobs:
           git add enviados.csv
           git commit -m "Atualiza histórico" || echo "Sem mudanças"
           git push
+          git config --global user.name "bot"
+          git config --global user.email "bot@github.com"
+          git add enviados.csv
+          git commit -m "Atualiza histórico" || echo "Sem mudanças"
+          git push
