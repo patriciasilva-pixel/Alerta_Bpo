@@ -1,7 +1,6 @@
 import pandas as pd
 import requests
 import os
-from datetime import datetime
 
 URL = "https://cayena.metabaseapp.com/public/question/9015cb16-054a-421d-b979-ff20aa139708.csv"
 
@@ -9,68 +8,70 @@ SLACK_WEBHOOK = os.environ.get("SLACK_WEBHOOK")
 
 ARQUIVO_CONTROLE = "enviados.csv"
 
-
-def formatar_data(data_str):
-    try:
-        return datetime.strptime(data_str, "%Y-%m-%dT%H:%M:%S").strftime("%d/%m/%Y %H:%M")
-    except:
-        return data_str
-
-
 def rodar_alerta():
+    print("Rodando verificação...")
+
     df = pd.read_csv(URL)
     df.columns = df.columns.str.strip().str.lower()
 
+    # 🔥 AGORA PEGA TODOS (não filtra mais CRIT)
     df = df[df["analista"].str.contains("BPO", case=False, na=False)]
-    criticos = df[df["nivel_alerta"].astype(str).str.upper().str.contains("CRIT", na=False)].copy()
 
-    # cria id único
-    criticos["id_unico"] = (
-        criticos["order_number"].astype(str) + "_" +
-        criticos["product"].astype(str) + "_" +
-        criticos["data_ajuste"].astype(str)
-    )
+    # cria ID único
+    df["id_unico"] = df["order_number"].astype(str) + "_" + df["data_ajuste"].astype(str)
 
-    # lê histórico
+    # carrega histórico
     if os.path.exists(ARQUIVO_CONTROLE):
         enviados = pd.read_csv(ARQUIVO_CONTROLE)
-        ids_enviados = set(enviados["id_unico"])
+        enviados_ids = set(enviados["id"].astype(str))
     else:
-        ids_enviados = set()
+        enviados_ids = set()
 
-    # filtra novos
-    novos = criticos[~criticos["id_unico"].isin(ids_enviados)]
+    novos = df[~df["id_unico"].isin(enviados_ids)]
 
-    if len(novos) > 0:
-        mensagem = "*ALERTA BPO - NOVOS AJUSTES CRÍTICOS*\n\n"
+    print(f"Novos registros: {len(novos)}")
 
-        for _, row in novos.iterrows():
-            data_formatada = formatar_data(str(row["data_ajuste"]))
+    # 🧠 PRIMEIRA EXECUÇÃO (não envia)
+    if len(enviados_ids) == 0:
+        print("Primeira execução - carregando base sem enviar alerta")
 
-            mensagem += (
-                f"Pedido: {row['order_number']}\n"
-                f"Produto: {row['product']}\n"
-                f"Analista: {row['analista']}\n"
-                f"Ajuste: R$ {row['valor_ajuste']} ({row['perc_ajuste']}%)\n"
-                f"Data: {data_formatada}\n"
-                f"-----------------------------\n"
-            )
+        df[["id_unico"]] \
+            .rename(columns={"id_unico": "id"}) \
+            .drop_duplicates() \
+            .to_csv(ARQUIVO_CONTROLE, index=False)
+
+    # 🚨 EXECUÇÕES NORMAIS
+    elif len(novos) > 0:
+        mensagem = "ALERTA BPO - ATUALIZAÇÕES DE PEDIDOS\n\n"
+
+        for _, row in novos.head(10).iterrows():
+            data_formatada = pd.to_datetime(row["data_ajuste"]).strftime("%d/%m/%Y %H:%M")
+
+            nivel = str(row.get("nivel_alerta", "SEM INFO")).upper()
+
+            mensagem += f"""Pedido: {row['order_number']}
+Produto: {row['product']}
+Analista: {row['analista']}
+Nível: {nivel}
+Ajuste: R$ {row['valor_ajuste']} ({row['perc_ajuste']}%)
+Data: {data_formatada}
+----------------------
+"""
 
         requests.post(SLACK_WEBHOOK, json={"text": mensagem})
 
-        # salva novos
-        novos[["id_unico"]].to_csv(
-            ARQUIVO_CONTROLE,
-            mode="a",
-            header=not os.path.exists(ARQUIVO_CONTROLE),
-            index=False
-        )
+        # atualiza histórico
+        novos_ids = novos[["id_unico"]].rename(columns={"id_unico": "id"})
 
-        print("✅ Novos alertas enviados")
+        enviados_atualizado = pd.concat([
+            pd.DataFrame({"id": list(enviados_ids)}),
+            novos_ids
+        ])
+
+        enviados_atualizado.drop_duplicates().to_csv(ARQUIVO_CONTROLE, index=False)
 
     else:
-        print("👍 Nenhum novo crítico")
-
+        print("Nenhum registro novo")
 
 if __name__ == "__main__":
     rodar_alerta()
