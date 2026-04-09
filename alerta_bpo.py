@@ -16,7 +16,7 @@ def rodar_alerta():
     df.columns = df.columns.str.strip().str.lower()
 
     # 🔥 pega só update
-    df = df[df['user_action'] == 'UPDATE']
+    df = df[df['email'].str.contains('actionline', na=False)]
 
     # 🔥 evita erro de nulo
     df['perc_ajuste'] = df['perc_ajuste'].fillna(0)
