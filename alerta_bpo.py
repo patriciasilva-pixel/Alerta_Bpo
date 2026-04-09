@@ -1,74 +1,43 @@
 import pandas as pd
-import requests
-import os
+from datetime import datetime
 
+# ====== LER CSV ======
 URL = "https://cayena.metabaseapp.com/public/question/9015cb16-054a-421d-b979-ff20aa139708.csv"
-SLACK_WEBHOOK = os.getenv("SLACK_WEBHOOK")
 
-ARQUIVO_CONTROLE = "enviados.csv"
+df = pd.read_csv(URL)
 
-def rodar_alerta():
-    print("Rodando alerta...")
+# ====== PADRONIZAR COLUNAS ======
+df.columns = df.columns.str.lower().str.replace(" ", "_")
 
-    df = pd.read_csv(URL)
+# ====== FILTROS ======
+# apenas actionline
+df = df[df['email'].str.contains('actionline', na=False)]
 
-    # 🔧 padroniza colunas
-    df.columns = df.columns.str.strip().str.lower()
+# apenas ajustes reais (evita pegar item sem alteração de preço)
+df = df[df['valor_ajuste'] != 0]
 
-    # 🔥 pega só update
-    df = df[df['email'].str.contains('actionline', na=False)]
+# ====== TRATAR DATA (ANTI ERRO TOTAL) ======
+df['data_ajuste'] = pd.to_datetime(
+    df['data_ajuste'],
+    errors='coerce'
+)
 
-    # 🔥 evita erro de nulo
-    df['perc_ajuste'] = df['perc_ajuste'].fillna(0)
+df['data_ajuste'] = df['data_ajuste'].dt.strftime('%d/%m/%Y %H:%M:%S')
 
-    # 🔥 cria ID único
-    df['id_unico'] = df['order_number'].astype(str) + "_" + df['data_ajuste'].astype(str)
+# se tiver algum NaN vira vazio (não quebra o slack)
+df['data_ajuste'] = df['data_ajuste'].fillna('Sem data')
 
-    # 📂 histórico
-    try:
-        enviados = pd.read_csv(ARQUIVO_CONTROLE)
-        ids_enviados = set(enviados['id'])
-    except:
-        ids_enviados = set()
+# ====== EXEMPLO DE USO (PRINT OU SLACK) ======
+for _, row in df.iterrows():
+    mensagem = f"""
+🚨 ALERTA BPO
 
-    novos = df[~df['id_unico'].isin(ids_enviados)]
-
-    print(f"Novos encontrados: {len(novos)}")
-
-    if novos.empty:
-        print("Nada novo.")
-        return
-
-    for _, row in novos.iterrows():
-
-        preco = f"R$ {row.get('preco_ajustado', 0):.2f}".replace(".", ",")
-
-        mensagem = f"""
-🚨 *ALERTA BPO - ATUALIZAÇÃO*
-
- *Pedido:* {row.get('order_number')}
- *Produto:* {row.get('product')}
- *Analista:* {row.get('analista')}
- *Nível:* {row.get('nivel_alerta')}
-
- *Preço:* {preco}
- *Data:* {row.get('data_ajuste')}
+Pedido: {row.get('order_number', 'N/A')}
+Produto: {row.get('product', 'N/A')}
+Analista: {row.get('analista', 'N/A')}
+Email: {row.get('email', 'N/A')}
+Ajuste: {row.get('perc_ajuste', 0)}%
+Data: {row.get('data_ajuste', 'N/A')}
 """
 
-        requests.post(SLACK_WEBHOOK, json={"text": mensagem})
-
-    # 💾 salva histórico
-    novos_ids = pd.DataFrame({'id': novos['id_unico']})
-
-    if os.path.exists(ARQUIVO_CONTROLE):
-        antigos = pd.read_csv(ARQUIVO_CONTROLE)
-        final = pd.concat([antigos, novos_ids])
-    else:
-        final = novos_ids
-
-    final.to_csv(ARQUIVO_CONTROLE, index=False)
-
-    print("Envio concluído!")
-
-if __name__ == "__main__":
-    rodar_alerta()
+    print(mensagem)
