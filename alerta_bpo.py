@@ -46,13 +46,13 @@ def rodar_alerta():
         mensagem = f"""
 🚨 *ALERTA BPO - ATUALIZAÇÃO*
 
-📦 *Pedido:* {row.get('order_number')}
-📌 *Produto:* {row.get('product')}
-👤 *Analista:* {row.get('analista')}
-📊 *Nível:* {row.get('nivel_alerta')}
+ *Pedido:* {row.get('order_number')}
+ *Produto:* {row.get('product')}
+ *Analista:* {row.get('analista')}
+ *Nível:* {row.get('nivel_alerta')}
 
-💰 *Preço:* {preco}
-📅 *Data:* {row.get('data_ajuste')}
+ *Preço:* {preco}
+ *Data:* {row.get('data_ajuste')}
 """
 
         requests.post(SLACK_WEBHOOK, json={"text": mensagem})
