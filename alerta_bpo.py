@@ -2,7 +2,7 @@ import pandas as pd
 import requests
 import os
 
-URL = "https://cayena.metabaseapp.com/public/question/9015cb16-054a-421d-b979-ff20aa139708"
+URL = "https://cayena.metabaseapp.com/public/question/9015cb16-054a-421d-b979-ff20aa139708.csv"
 SLACK_WEBHOOK = os.getenv("SLACK_WEBHOOK")
 
 ARQUIVO_CONTROLE = "enviados.csv"
