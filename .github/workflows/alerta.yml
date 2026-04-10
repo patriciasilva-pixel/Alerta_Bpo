@@ -8,6 +8,10 @@ on:
 jobs:
   run-alerta:
     runs-on: ubuntu-latest
+    
+    # ADICIONE ESTA PARTE: Dá permissão para o robô escrever no seu repositório
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout do código
@@ -28,13 +32,9 @@ jobs:
 
       - name: Salvar histórico no GitHub
         run: |
-          git config --global user.name "bot"
+          git config --global user.name "robô"
           git config --global user.email "bot@github.com"
           git add enviados.csv
-          git commit -m "Atualiza histórico" || echo "Sem mudanças"
-          git push
-          git config --global user.name "bot"
-          git config --global user.email "bot@github.com"
-          git add enviados.csv
-          git commit -m "Atualiza histórico" || echo "Sem mudanças"
+          # O "|| echo" evita que o erro pare o processo se não houver novos IDs
+          git commit -m "Atualização histórica [skip ci]" || echo "Sem mudanças para salvar"
           git push
