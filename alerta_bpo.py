@@ -1,71 +1,77 @@
-import pandas as pd
-from datetime import datetime
 import requests
 import os
+import csv
+from datetime import datetime
 
-# ===== CONFIG =====
-URL = "https://cayena.metabaseapp.com/public/question/9015cb16-054a-421d-b979-ff20aa139708.csv"
-SLACK_WEBHOOK = os.getenv("SLACK_WEBHOOK")
+# --- CONFIGURAÇÕES ---
+METABASE_PUBLIC_URL = "https://cayena.metabaseapp.com/public/question/9015cb16-054a-421d-b979-ff20aa139708.csv"
+SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK")
+CSV_FILE = 'enviados.csv'
 
-ARQUIVO_CONTROLE = "enviados.csv"
+def carregar_enviados():
+    """Lê os IDs do ficheiro CSV para uma lista"""
+    if not os.path.exists(CSV_FILE):
+        return []
+    with open(CSV_FILE, mode='r', encoding='utf-8') as f:
+        # Lê cada linha e remove espaços/quebras de linha
+        return [linha.strip() for linha in f.readlines()]
 
-# ===== LER DADOS =====
-df = pd.read_csv(URL)
-df.columns = df.columns.str.lower().str.replace(" ", "_")
+def registrar_envio(pedido_id):
+    """Adiciona o novo ID ao ficheiro CSV com timestamp"""
+    agora = datetime.now().strftime('%d/%m/%Y %H:%M:%S')
+    # Formato: ID_DATA_HORA (conforme a imagem que mostraste)
+    entrada = f"{pedido_id}_{agora}"
+    with open(CSV_FILE, mode='a', encoding='utf-8') as f:
+        f.write(f"\n{entrada}")
 
-# ===== FILTROS =====
-df = df[df['email'].str.contains('actionline', na=False)]
+def ja_enviado_hoje(pedido_id, lista_enviados):
+    """Verifica se o ID do pedido já consta no histórico de hoje"""
+    hoje = datetime.now().strftime('%d/%m/%Y')
+    for item in lista_enviados:
+        # Verifica se o ID e a data de hoje estão na mesma linha
+        if pedido_id in item and hoje in item:
+            return True
+    return False
 
-# ===== CRIAR ID ÚNICO =====
-df['id_unico'] = (
-    df['order_number'].astype(str) +
-    df['product'].astype(str) +
-    df['data_ajuste'].astype(str)
-)
-
-# ===== CARREGAR HISTÓRICO =====
-try:
-    enviados = pd.read_csv(ARQUIVO_CONTROLE)
-    enviados_ids = set(enviados['id_unico'])
-except:
-    enviados_ids = set()
-
-# ===== FILTRAR NOVOS =====
-df_novos = df[~df['id_unico'].isin(enviados_ids)]
-
-# ===== FORMATAR DATA =====
-df_novos['data_ajuste'] = pd.to_datetime(
-    df_novos['data_ajuste'],
-    errors='coerce'
-).dt.strftime('%d/%m/%Y %H:%M:%S')
-
-# ===== ENVIAR PARA SLACK =====
-novos_enviados = []
-
-for _, row in df_novos.iterrows():
-
-    mensagem = f"""
-ALERTA BPO
-
-Pedido: {row.get('order_number', 'N/A')}
-Produto: {row.get('product', 'N/A')}
-Analista: {row.get('analista', 'N/A')}
-Ajuste (%): {row.get('perc_ajuste', 0)}
-Data: {row.get('data_ajuste', 'N/A')}
-"""
-
-    requests.post(SLACK_WEBHOOK, json={"text": mensagem})
-
-    novos_enviados.append(row['id_unico'])
-
-# ===== SALVAR CONTROLE =====
-if novos_enviados:
-    df_salvar = pd.DataFrame({'id_unico': novos_enviados})
-
+def main():
+    enviados = carregar_enviados()
+    
     try:
-        antigos = pd.read_csv(ARQUIVO_CONTROLE)
-        df_final = pd.concat([antigos, df_salvar])
-    except:
-        df_final = df_salvar
+        response = requests.get(METABASE_PUBLIC_URL)
+        response.raise_for_status()
+        dados = response.json()
+    except Exception as e:
+        print(f"Erro ao aceder ao Metabase: {e}")
+        return
 
-    df_final.drop_duplicates().to_csv(ARQUIVO_CONTROLE, index=False)
+    for row in dados:
+        # Ajusta 'id_pedido' para o nome da coluna no teu Metabase
+        pedido_id = str(row.get('id_pedido') or row.get('ID'))
+        
+        if not pedido_id or pedido_id == 'None':
+            continue
+
+        if not ja_enviado_hoje(pedido_id, enviados):
+            msg_slack = {
+                "text": (
+                    f"🚨 *Alerta de Ajuste no Pedido*\n"
+                    f"*Produto:* {row.get('product', 'N/A')}\n"
+                    f"*Analista:* {row.get('analista', 'N/A')}\n"
+                    f"*Email:* {row.get('email', 'N/A')}\n"
+                    f"*Ajuste (%):* {row.get('perc_ajuste', 0)}%\n"
+                    f"*Data:* {row.get('data_ajuste', 'N/A')}"
+                )
+            }
+            
+            res = requests.post(SLACK_WEBHOOK_URL, json=msg_slack)
+            
+            if res.status_code == 200:
+                registrar_envio(pedido_id)
+                print(f"✅ Enviado: {pedido_id}")
+            else:
+                print(f"❌ Erro Slack: {res.status_code}")
+        else:
+            print(f"⏭️ Pedido {pedido_id} já enviado hoje. Ignorando.")
+
+if __name__ == "__main__":
+    main()
