@@ -4,7 +4,7 @@ from datetime import datetime
 
 # --- CONFIGURAÇÕES ---
 # ⚠️ COLE AQUI O LINK QUE TERMINA EM .json
-METABASE_PUBLIC_URL = "https://cayena.metabaseapp.com/public/question/9015cb16-054a-421d-b979-ff20aa139708.csv" 
+METABASE_PUBLIC_URL = "https://cayena.metabaseapp.com/public/question/9015cb16-054a-421d-b979-ff20aa139708" 
 SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK")
 CSV_FILE = 'enviados.csv'
 
