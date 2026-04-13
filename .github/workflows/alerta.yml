@@ -2,20 +2,23 @@ name: Alerta BPO
 
 on:
   schedule:
-    - cron: "*/2 * * * *"  # Tenta rodar a cada 2 minutos
-  workflow_dispatch:       # Mantém o botão de rodar manual
+    - cron: "*/2 * * * *"
+  workflow_dispatch:
   push:
     branches:
-      - principal          # Acorda o robô sempre que houver mudança no código ou CSV
+      - principal
     paths:
-      - 'enviados.csv'     # Foca especificamente na atualização do histórico
+      - 'enviados.csv'
+
+jobs:
+  run-alerta:
+    runs-on: ubuntu-latest
     
-    # ADICIONE ESTA PARTE: Dá permissão para o robô escrever no seu repositório
     permissions:
       contents: write
 
     steps:
-      - name: Checkout do código
+      - name: Checkout do codigo
         uses: actions/checkout@v3
 
       - name: Configurar Python
@@ -23,7 +26,7 @@ on:
         with:
           python-version: '3.10'
 
-      - name: Instalar dependências
+      - name: Instalar dependencias
         run: pip install pandas requests
 
       - name: Rodar script
@@ -31,11 +34,10 @@ on:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
         run: python alerta_bpo.py
 
-      - name: Salvar histórico no GitHub
+      - name: Salvar historico no GitHub
         run: |
-          git config --global user.name "robô"
+          git config --global user.name "robo"
           git config --global user.email "bot@github.com"
           git add enviados.csv
-          # O "|| echo" evita que o erro pare o processo se não houver novos IDs
-          git commit -m "Atualização histórica [skip ci]" || echo "Sem mudanças para salvar"
+          git commit -m "Atualizacao historica [skip ci]" || echo "Sem mudancas para salvar"
           git push
