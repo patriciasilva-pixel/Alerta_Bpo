@@ -17,18 +17,16 @@ def registrar_envio(id_unico):
     with open(CSV_FILE, mode='a', encoding='utf-8') as f:
         f.write(f"{id_unico}\n")
 
-def formatar_valor(valor, sufixo=""):
+def formatar_moeda(valor):
     try:
-        if valor is None or str(valor).strip() in ["", "0", "0.0", "0.00"]: return "-"
+        if valor is None or str(valor).strip() in ["", "None"]: return "R$ 0,00"
         num = float(valor)
-        if num == 0: return "-"
-        if sufixo == "R$ ": return f"R$ {num:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
-        return f"{num}{sufixo}"
-    except: return "-"
+        return f"R$ {num:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
+    except:
+        return "R$ 0,00"
 
 def main():
     print("🚀 Iniciando verificação...")
-    # Pequena pausa para o GitHub organizar os arquivos antes de começar
     time.sleep(5) 
     
     enviados = carregar_enviados()
@@ -36,7 +34,9 @@ def main():
     try:
         res = requests.get(METABASE_PUBLIC_URL)
         dados = res.json()
-    except: return
+    except Exception as e:
+        print(f"Erro ao buscar dados: {e}")
+        return
 
     for row in dados:
         pedido_id = str(row.get('order_number'))
@@ -56,27 +56,26 @@ def main():
 
             header = "*ALERTA DE AJUSTE CRÍTICO*" if "CRIT" in status_regra else "*NOTIFICAÇÃO DE AJUSTE DE PEDIDO*"
             
+            # --- AJUSTE NA MENSAGEM PARA EXIBIR DADOS REAIS ---
             msg_slack = {
                 "text": (
                     f"{header}\n"
                     f"──────────────────────────────\n"
-                    f"*Status:* {'CRÍTICO' if 'CRIT' in status_regra else 'OK'}\n"
+                    f"*Status:* {status_regra}\n"
                     f"*ID do Pedido:* {pedido_id}\n"
                     f"*Produto:* {row.get('product', 'N/A')}\n"
                     f"*Analista:* {row.get('analista', 'N/A')}\n"
-                    f"*Ajuste:* {formatar_valor(row.get('perc_ajuste'), '%')}\n"
-                    f"*Valor:* {formatar_valor(row.get('valor_ajuste'), 'R$ ')}\n"
-                    f"*Data:* {data_exibicao}\n"
+                    f"*Preço Unitário:* {formatar_moeda(row.get('preco_original'))}\n"
+                    f"*Quantidade:* {row.get('quantity', '-')}\n"
+                    f"*Data do Evento:* {data_exibicao}\n"
                     f"──────────────────────────────"
                 )
             }
             
-            # Envia e já adiciona ao histórico LOCAL para não repetir no mesmo loop
             if requests.post(SLACK_WEBHOOK_URL, json=msg_slack).status_code == 200:
                 registrar_envio(id_unico)
                 enviados.add(id_unico)
                 print(f"✅ Enviado: {pedido_id}")
-                # Pausa entre mensagens para não sobrecarregar o Slack
                 time.sleep(1) 
 
 if __name__ == "__main__":
