@@ -1,6 +1,7 @@
 import requests
 import os
 from datetime import datetime, timedelta
+import pytz # Biblioteca para lidar com o horário do Brasil
 from flask import Flask
 
 app = Flask(__name__)
@@ -8,11 +9,12 @@ app = Flask(__name__)
 # --- CONFIGURAÇÕES ---
 METABASE_URL = "https://cayena.metabaseapp.com/public/question/9015cb16-054a-421d-b979-ff20aa139708.json"
 SLACK_WEBHOOK = os.getenv("SLACK_WEBHOOK")
+FUSO = pytz.timezone('America/Sao_Paulo')
 
 @app.route('/')
 def home():
-    mensagens_enviadas = executar_bot()
-    return f"Status: OK | Alertas enviados: {mensagens_enviadas} | Hora: {datetime.now().strftime('%H:%M:%S')}", 200
+    enviados = executar_bot()
+    return f"Status: OK | Novos alertas: {enviados} | Check: {datetime.now(FUSO).strftime('%H:%M:%S')}", 200
 
 def executar_bot():
     try:
@@ -20,36 +22,35 @@ def executar_bot():
         dados = res.json()
         
         contagem = 0
-        agora = datetime.now()
-        # Define a janela de tempo (ex: ajustes dos últimos 2 minutos)
-        limite_tempo = agora - timedelta(minutes=2)
+        agora = datetime.now(FUSO)
+        # Janela de 2 minutos para garantir que pegamos o ajuste assim que ele sair no Meta
+        limite = agora - timedelta(minutes=2)
 
         for linha in dados:
-            # Pega a data do ajuste (ajuste o nome da coluna 'Data' se for diferente no seu Metabase)
-            # Supondo que a coluna de data se chama 'created_at' ou 'Data do Ajuste'
-            data_ajuste_str = linha.get('Data do Ajuste') or linha.get('created_at')
-            
-            if data_ajuste_str:
-                # Converte o texto da data para objeto real de tempo
-                data_ajuste = datetime.strptime(data_ajuste_str[:19], "%Y-%m-%dT%H:%M:%S")
+            data_str = linha.get('data_ajuste')
+            if data_str:
+                # O Metabase geralmente manda: "2026-04-13T18:46:00"
+                data_obj = datetime.strptime(data_str[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=pytz.UTC).astimezone(FUSO)
                 
-                # SÓ ENVIA SE FOR NOVO (Dentro da janela de 2 minutos)
-                if data_ajuste > limite_tempo:
+                if data_obj > limite:
                     enviar_slack(linha)
                     contagem += 1
-        
         return contagem
     except Exception as e:
         print(f"Erro: {e}")
         return 0
 
 def enviar_slack(item):
-    # Personalize aqui com as colunas do seu Metabase
     msg = {
-        "text": f"🚨 *Novo Ajuste Detectado!*\n"
-                f"*Pedido:* {item.get('Pedido', 'N/A')}\n"
-                f"*Valor:* R$ {item.get('Valor', '0')}\n"
-                f"*BPO:* {item.get('Nome BPO', 'N/A')}"
+        "text": (
+            f"🚨 *Novo Ajuste de Preço!*\n"
+            f"📦 *Pedido:* `{item.get('order_number')}`\n"
+            f"🍎 *Produto:* {item.get('product')}\n"
+            f"💰 *Preço Orig:* R$ {item.get('preco_original')}\n"
+            f"📉 *Valor Ajuste:* R$ {item.get('valor_ajuste')}\n"
+            f"👤 *BPO:* {item.get('email')}\n"
+            f"⏰ *Data:* {item.get('data_ajuste')}"
+        )
     }
     requests.post(SLACK_WEBHOOK, json=msg)
 
