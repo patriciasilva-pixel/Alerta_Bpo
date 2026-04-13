@@ -2,12 +2,13 @@ name: Alerta BPO
 
 on:
   schedule:
-    - cron: "*/2 * * * *"
-  workflow_dispatch:
-
-jobs:
-  run-alerta:
-    runs-on: ubuntu-latest
+    - cron: "*/2 * * * *"  # Tenta rodar a cada 2 minutos
+  workflow_dispatch:       # Mantém o botão de rodar manual
+  push:
+    branches:
+      - principal          # Acorda o robô sempre que houver mudança no código ou CSV
+    paths:
+      - 'enviados.csv'     # Foca especificamente na atualização do histórico
     
     # ADICIONE ESTA PARTE: Dá permissão para o robô escrever no seu repositório
     permissions:
