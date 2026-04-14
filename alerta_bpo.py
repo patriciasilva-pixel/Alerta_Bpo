@@ -10,14 +10,12 @@ app = Flask(__name__)
 METABASE_URL = "https://cayena.metabaseapp.com/public/question/9015cb16-054a-421d-b979-ff20aa139708.json"
 SLACK_WEBHOOK = os.getenv("SLACK_WEBHOOK")
 FUSO = pytz.timezone('America/Sao_Paulo')
-
 CACHE_FILE = "cache_ids.txt"
 
 # ===== CACHE =====
 def carregar_cache():
     if not os.path.exists(CACHE_FILE):
         return {}
-
     cache = {}
     with open(CACHE_FILE, "r") as f:
         for linha in f:
@@ -48,7 +46,6 @@ def home():
 def executar_bot():
     try:
         print("Iniciando execução...")
-
         res = requests.get(METABASE_URL, timeout=30)
         res.raise_for_status()
         dados = res.json()
@@ -57,15 +54,15 @@ def executar_bot():
             print("Nenhum dado retornado.")
             return 0
 
-        # 🔥 ordenar mais recente primeiro
+        # Ordenar mais recente primeiro
         dados = sorted(dados, key=lambda x: x.get('data_ajuste', ''), reverse=True)
 
         agora = datetime.now(FUSO)
-        limite = agora - timedelta(minutes=8)
+        # Janela de 15 minutos para garantir que pegamos tudo sem pressa
+        limite = agora - timedelta(minutes=15)
 
         cache = carregar_cache()
         cache = limpar_cache(cache)
-
         enviados = 0
 
         for linha in dados:
@@ -76,32 +73,28 @@ def executar_bot():
                 continue
 
             try:
-                data_obj = datetime.strptime(data_str[:19], "%Y-%m-%dT%H:%M:%S")
-            except:
-                print("Erro ao converter data:", data_str)
+                # ✅ CORREÇÃO: Transformamos o texto em data e avisamos que é fuso de Brasília
+                data_crua = datetime.strptime(data_str[:19], "%Y-%m-%dT%H:%M:%S")
+                data_obj = FUSO.localize(data_crua) 
+            except Exception as e:
+                print(f"Erro data: {e}")
                 continue
 
-            # 🚨 filtro principal (janela)
+            # 🚨 Se sair da janela de 15 min, para o loop (otimização)
             if data_obj < limite:
                 break
-
-            # 🚨 filtro anti-atraso extremo (anti-spam)
-            diferenca = (agora - data_obj).total_seconds()
-            if diferenca > 600:  # 10 minutos
-                continue
 
             id_unico = f"{pedido}_{data_str}"
 
             if id_unico in cache:
                 continue
 
+            # Enviar e salvar no cache
             enviar_slack(linha)
-
-            cache[id_unico] = datetime.now(FUSO)
+            cache[id_unico] = agora
             enviados += 1
 
         salvar_cache(cache)
-
         print(f"Finalizado. Enviados: {enviados}")
         return enviados
 
@@ -113,11 +106,7 @@ def executar_bot():
 def enviar_slack(item):
     try:
         status = str(item.get('status_alerta', 'OK')).upper()
-
-        if "CRIT" in status:
-            header = "*🚨 ALERTA CRÍTICO DE AJUSTE*"
-        else:
-            header = "*📊 Ajuste de Pedido*"
+        header = "*🚨 ALERTA CRÍTICO DE AJUSTE*" if "CRIT" in status else "*📊 Ajuste de Pedido*"
 
         msg = {
             "text": (
@@ -132,16 +121,10 @@ def enviar_slack(item):
                 f"────────────────────────────"
             )
         }
-
-        response = requests.post(SLACK_WEBHOOK, json=msg, timeout=10)
-
-        if response.status_code != 200:
-            print("Erro Slack:", response.status_code, response.text)
-
+        requests.post(SLACK_WEBHOOK, json=msg, timeout=10)
     except Exception as e:
         print("Erro envio Slack:", e)
 
-# ===== START =====
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
