@@ -1,7 +1,7 @@
 import requests
 import os
 from datetime import datetime, timedelta
-import pytz # Biblioteca para lidar com o horário do Brasil
+import pytz
 from flask import Flask
 
 app = Flask(__name__)
@@ -14,7 +14,7 @@ FUSO = pytz.timezone('America/Sao_Paulo')
 @app.route('/')
 def home():
     enviados = executar_bot()
-    return f"Status: OK | Novos alertas: {enviados} | Check: {datetime.now(FUSO).strftime('%H:%M:%S')}", 200
+    return f"Status: OK | Alertas na janela: {enviados} | Check: {datetime.now(FUSO).strftime('%H:%M:%S')}", 200
 
 def executar_bot():
     try:
@@ -23,15 +23,19 @@ def executar_bot():
         
         contagem = 0
         agora = datetime.now(FUSO)
-        # Janela de 2 minutos para garantir que pegamos o ajuste assim que ele sair no Meta
-        limite = agora - timedelta(minutes=2)
+        
+        # DEFINA AQUI O TEMPO (em minutos) PARA TRÁS QUE ELE DEVE OLHAR
+        # Se agora são 10h30 e você quer pegar desde as 06h00, use 270 minutos.
+        minutos_atras = 300 
+        limite = agora - timedelta(minutes=minutos_atras)
 
         for linha in dados:
             data_str = linha.get('data_ajuste')
             if data_str:
-                # O Metabase geralmente manda: "2026-04-13T18:46:00"
+                # Converte a data do Metabase para o horário de Brasília
                 data_obj = datetime.strptime(data_str[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=pytz.UTC).astimezone(FUSO)
                 
+                # Se o ajuste aconteceu dentro da nossa janela (ex: desde as 06h)
                 if data_obj > limite:
                     enviar_slack(linha)
                     contagem += 1
@@ -43,13 +47,12 @@ def executar_bot():
 def enviar_slack(item):
     msg = {
         "text": (
-            f"🚨 *Novo Ajuste de Preço!*\n"
+            f"🚨 *Ajuste Detectado (Operação Hoje)*\n"
             f"📦 *Pedido:* `{item.get('order_number')}`\n"
             f"🍎 *Produto:* {item.get('product')}\n"
-            f"💰 *Preço Orig:* R$ {item.get('preco_original')}\n"
-            f"📉 *Valor Ajuste:* R$ {item.get('valor_ajuste')}\n"
+            f"💰 *Preço:* R$ {item.get('preco_original')} -> R$ {item.get('valor_ajuste')}\n"
             f"👤 *BPO:* {item.get('email')}\n"
-            f"⏰ *Data:* {item.get('data_ajuste')}"
+            f"⏰ *Hora:* {item.get('data_ajuste')}"
         )
     }
     requests.post(SLACK_WEBHOOK, json=msg)
