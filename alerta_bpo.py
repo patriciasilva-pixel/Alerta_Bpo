@@ -55,6 +55,7 @@ def executar_bot():
         dados = sorted(dados, key=lambda x: x.get('data_ajuste', ''), reverse=True)
 
         agora = datetime.now(FUSO)
+        # Janela de 2 horas para garantir cobertura total
         limite = agora - timedelta(hours=2)
 
         cache = carregar_cache()
@@ -75,19 +76,18 @@ def executar_bot():
             except:
                 continue
 
+            # Para o loop se o registro for muito antigo
             if data_obj < limite:
                 break
 
-            # 🔥 ID INTELIGENTE (pedido + minuto)
+            # ID INTELIGENTE (pedido + minuto)
             id_unico = f"{pedido}_{data_str[:16]}"
 
             if id_unico in cache:
                 continue
 
-            # 🔥 ignora ajuste sem valor
-            if float(linha.get('valor_ajuste') or 0) == 0:
-                continue
-
+            # ✅ FILTRO REMOVIDO: Agora envia ajustes mesmo com valor R$ 0.0
+            
             enviar_slack(linha)
 
             cache[id_unico] = agora
