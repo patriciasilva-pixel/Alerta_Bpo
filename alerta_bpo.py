@@ -55,7 +55,7 @@ def executar_bot():
         dados = sorted(dados, key=lambda x: x.get('data_ajuste', ''), reverse=True)
 
         agora = datetime.now(FUSO)
-        limite = agora - timedelta(minutes=5)
+        limite = agora - timedelta(hours=2)
 
         cache = carregar_cache()
         cache = limpar_cache(cache)
