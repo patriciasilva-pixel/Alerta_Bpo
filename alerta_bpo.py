@@ -6,14 +6,16 @@ from flask import Flask
 
 app = Flask(__name__)
 
-# ===== CONFIG =====
+# CONFIG
 METABASE_URL = "https://cayena.metabaseapp.com/public/question/9015cb16-054a-421d-b979-ff20aa139708.json"
 SLACK_WEBHOOK = os.getenv("SLACK_WEBHOOK")
 FUSO = pytz.timezone('America/Sao_Paulo')
 
 ARQUIVO_CACHE = "cache_ids.txt"
 
-# ===== CACHE =====
+# =========================
+# CACHE
+# =========================
 def carregar_cache():
     if not os.path.exists(ARQUIVO_CACHE):
         return {}
@@ -38,25 +40,29 @@ def limpar_cache(cache):
     limite = agora - timedelta(hours=2)
     return {k: v for k, v in cache.items() if v > limite}
 
-# ===== ROUTE =====
+# =========================
+# ROUTE
+# =========================
 @app.route('/')
 def home():
     enviados = executar_bot()
     return f"Status: OK | Enviados: {enviados} | Hora: {datetime.now(FUSO).strftime('%H:%M:%S')}"
 
-# ===== BOT =====
+# =========================
+# BOT
+# =========================
 def executar_bot():
     try:
         res = requests.get(METABASE_URL, timeout=30)
-        res.raise_for_status()
         dados = res.json()
 
-        # 🔥 ordena do mais novo pro mais antigo
+        # Ordena do mais novo pro mais antigo
         dados = sorted(dados, key=lambda x: x.get('data_ajuste', ''), reverse=True)
 
         agora = datetime.now(FUSO)
-        # Janela de 2 horas para garantir cobertura total
-        limite = agora - timedelta(hours=2)
+
+        # 🔥 Janela inteligente (absorve delay de sistema)
+        limite = agora - timedelta(minutes=15)
 
         cache = carregar_cache()
         cache = limpar_cache(cache)
@@ -76,62 +82,52 @@ def executar_bot():
             except:
                 continue
 
-            # Para o loop se o registro for muito antigo
+            # Para performance (já ordenado)
             if data_obj < limite:
                 break
 
-            # ID INTELIGENTE (pedido + minuto)
-            id_unico = f"{pedido}_{data_str[:16]}"
+            # 🔐 ID único REAL (evento único)
+            id_unico = f"{pedido}_{data_str}"
 
             if id_unico in cache:
                 continue
 
-            # ✅ FILTRO REMOVIDO: Agora envia ajustes mesmo com valor R$ 0.0
-            
             enviar_slack(linha)
 
             cache[id_unico] = agora
             enviados += 1
 
         salvar_cache(cache)
+
         return enviados
 
     except Exception as e:
-        print("Erro no bot:", e)
+        print("Erro:", e)
         return 0
 
-# ===== SLACK =====
+# =========================
+# SLACK
+# =========================
 def enviar_slack(item):
-    try:
-        status = str(item.get('status_alerta', 'OK')).upper()
+    status = str(item.get('status_alerta', 'OK')).upper()
 
-        titulo = "Ajuste de Pedido"
-        if "CRIT" in status:
-            titulo = "ALERTA CRÍTICO - Ajuste de Pedido"
+    msg = {
+        "text": (
+            f"*Ajuste de Pedido*\n"
+            f"Pedido: `{item.get('order_number')}`\n"
+            f"Produto: {item.get('product')}\n"
+            f"Valor Ajuste: R$ {item.get('valor_ajuste')}\n"
+            f"Status: {status}\n"
+            f"Responsável: {item.get('analista')}\n"
+            f"Data: {item.get('data_ajuste')}"
+        )
+    }
 
-        msg = {
-            "text": (
-                f"*{titulo}*\n"
-                f"────────────────────────────\n"
-                f"*Pedido:* `{item.get('order_number')}`\n"
-                f"*Produto:* {item.get('product')}\n"
-                f"*Valor do Ajuste:* R$ {item.get('valor_ajuste')}\n"
-                f"*Status:* {status}\n"
-                f"*Responsável:* {item.get('analista')}\n"
-                f"*Data:* {item.get('data_ajuste')}\n"
-                f"────────────────────────────"
-            )
-        }
+    requests.post(SLACK_WEBHOOK, json=msg)
 
-        response = requests.post(SLACK_WEBHOOK, json=msg, timeout=10)
-
-        if response.status_code != 200:
-            print("Erro Slack:", response.status_code, response.text)
-
-    except Exception as e:
-        print("Erro ao enviar Slack:", e)
-
-# ===== START =====
+# =========================
+# START
+# =========================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
