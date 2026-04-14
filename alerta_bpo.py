@@ -11,15 +11,15 @@ METABASE_URL = "https://cayena.metabaseapp.com/public/question/9015cb16-054a-421
 SLACK_WEBHOOK = os.getenv("SLACK_WEBHOOK")
 FUSO = pytz.timezone('America/Sao_Paulo')
 
-ARQUIVO_CACHE = "cache_ids.txt"
+CACHE_FILE = "cache_ids.txt"
 
 # ===== CACHE =====
 def carregar_cache():
-    if not os.path.exists(ARQUIVO_CACHE):
+    if not os.path.exists(CACHE_FILE):
         return {}
 
     cache = {}
-    with open(ARQUIVO_CACHE, "r") as f:
+    with open(CACHE_FILE, "r") as f:
         for linha in f:
             try:
                 id_, ts = linha.strip().split("|")
@@ -29,7 +29,7 @@ def carregar_cache():
     return cache
 
 def salvar_cache(cache):
-    with open(ARQUIVO_CACHE, "w") as f:
+    with open(CACHE_FILE, "w") as f:
         for k, v in cache.items():
             f.write(f"{k}|{v.isoformat()}\n")
 
@@ -47,11 +47,17 @@ def home():
 # ===== BOT =====
 def executar_bot():
     try:
+        print("Iniciando execução...")
+
         res = requests.get(METABASE_URL, timeout=30)
         res.raise_for_status()
         dados = res.json()
 
-        # 🔥 ordenar do mais novo para o mais antigo
+        if not dados:
+            print("Nenhum dado retornado.")
+            return 0
+
+        # 🔥 ordenar mais recente primeiro
         dados = sorted(dados, key=lambda x: x.get('data_ajuste', ''), reverse=True)
 
         agora = datetime.now(FUSO)
@@ -70,13 +76,19 @@ def executar_bot():
                 continue
 
             try:
-                # ✅ NÃO usa timezone (já vem em horário BR)
                 data_obj = datetime.strptime(data_str[:19], "%Y-%m-%dT%H:%M:%S")
             except:
+                print("Erro ao converter data:", data_str)
                 continue
 
+            # 🚨 filtro principal (janela)
             if data_obj < limite:
                 break
+
+            # 🚨 filtro anti-atraso extremo (anti-spam)
+            diferenca = (agora - data_obj).total_seconds()
+            if diferenca > 600:  # 10 minutos
+                continue
 
             id_unico = f"{pedido}_{data_str}"
 
@@ -90,11 +102,11 @@ def executar_bot():
 
         salvar_cache(cache)
 
-        print(f"Enviados nesta execução: {enviados}")
+        print(f"Finalizado. Enviados: {enviados}")
         return enviados
 
     except Exception as e:
-        print("Erro no bot:", e)
+        print("Erro geral:", e)
         return 0
 
 # ===== SLACK =====
@@ -102,19 +114,22 @@ def enviar_slack(item):
     try:
         status = str(item.get('status_alerta', 'OK')).upper()
 
-        header = "*ATENÇÃO: AJUSTE CRÍTICO*" if "CRIT" in status else "*AJUSTE DE PEDIDO*"
+        if "CRIT" in status:
+            header = "*🚨 ALERTA CRÍTICO DE AJUSTE*"
+        else:
+            header = "*📊 Ajuste de Pedido*"
 
         msg = {
             "text": (
                 f"{header}\n"
-                f"----------------------------------\n"
-                f"*Pedido:* {item.get('order_number')}\n"
+                f"────────────────────────────\n"
+                f"*Pedido:* `{item.get('order_number')}`\n"
                 f"*Produto:* {item.get('product')}\n"
                 f"*Ajuste:* R$ {item.get('valor_ajuste')}\n"
                 f"*Status:* {status}\n"
                 f"*Responsável:* {item.get('analista')}\n"
                 f"*Data:* {item.get('data_ajuste')}\n"
-                f"----------------------------------"
+                f"────────────────────────────"
             )
         }
 
@@ -124,7 +139,7 @@ def enviar_slack(item):
             print("Erro Slack:", response.status_code, response.text)
 
     except Exception as e:
-        print("Erro ao enviar Slack:", e)
+        print("Erro envio Slack:", e)
 
 # ===== START =====
 if __name__ == "__main__":
