@@ -11,7 +11,7 @@ METABASE_URL = "https://cayena.metabaseapp.com/public/question/9015cb16-054a-421
 SLACK_WEBHOOK = os.getenv("SLACK_WEBHOOK")
 FUSO = pytz.timezone('America/Sao_Paulo')
 
-ARQUIVO_CACHE = "cache_ids.txt"
+ARQUIVO_CACHE = "/app/cache_ids.txt"
 
 # ===== CACHE =====
 def carregar_cache():
