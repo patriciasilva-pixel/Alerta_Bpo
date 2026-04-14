@@ -54,7 +54,7 @@ def executar_bot():
         dados = sorted(dados, key=lambda x: x.get('data_ajuste', ''), reverse=True)
 
         agora = datetime.now(FUSO)
-        limite = agora - timedelta(minutes=15) # Janela de 15 min para segurança
+        limite = agora - timedelta(minutes=60) # Janela de 15 min para segurança
 
         cache = carregar_cache()
         cache = limpar_cache(cache)
