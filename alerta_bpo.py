@@ -14,28 +14,30 @@ FUSO = pytz.timezone('America/Sao_Paulo')
 @app.route('/')
 def home():
     enviados = executar_bot()
-    return f"Status: OK | Alertas na janela: {enviados} | Check: {datetime.now(FUSO).strftime('%H:%M:%S')}", 200
+    return f"Status: OK | Alertas Novos: {enviados} | Check: {datetime.now(FUSO).strftime('%H:%M:%S')}", 200
 
 def executar_bot():
     try:
+        agora = datetime.now(FUSO)
+        
+        # Trava de segurança: Só roda no horário de operação (06h às 22h)
+        # Isso evita que o robô gaste todas as horas gratuitas do Render
+        if agora.hour < 6 or agora.hour >= 22:
+            return 0
+
         res = requests.get(METABASE_URL, timeout=30)
         dados = res.json()
         
         contagem = 0
-        agora = datetime.now(FUSO)
-        
-        # DEFINA AQUI O TEMPO (em minutos) PARA TRÁS QUE ELE DEVE OLHAR
-        # Se agora são 10h30 e você quer pegar desde as 06h00, use 270 minutos.
-        minutos_atras = 300 
-        limite = agora - timedelta(minutes=minutos_atras)
+        # Janela de 3 minutos para quem roda a cada 2 minutos
+        limite = agora - timedelta(minutes=3)
 
         for linha in dados:
             data_str = linha.get('data_ajuste')
             if data_str:
-                # Converte a data do Metabase para o horário de Brasília
                 data_obj = datetime.strptime(data_str[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=pytz.UTC).astimezone(FUSO)
                 
-                # Se o ajuste aconteceu dentro da nossa janela (ex: desde as 06h)
+                # Se o ajuste aconteceu agora (nos últimos 3 min)
                 if data_obj > limite:
                     enviar_slack(linha)
                     contagem += 1
@@ -45,14 +47,22 @@ def executar_bot():
         return 0
 
 def enviar_slack(item):
+    status = item.get('status_alerta', 'OK').upper()
+    
+    header = "*ATENÇÃO: MONITORAMENTO DE AJUSTE CRÍTICO*" if status == 'CRÍTICO' else "*RELATÓRIO DE AJUSTE DE PEDIDO*"
+
     msg = {
         "text": (
-            f"🚨 *Ajuste Detectado (Operação Hoje)*\n"
-            f"📦 *Pedido:* `{item.get('order_number')}`\n"
-            f"🍎 *Produto:* {item.get('product')}\n"
-            f"💰 *Preço:* R$ {item.get('preco_original')} -> R$ {item.get('valor_ajuste')}\n"
-            f"👤 *BPO:* {item.get('email')}\n"
-            f"⏰ *Hora:* {item.get('data_ajuste')}"
+            f"{header}\n"
+            f"--------------------------------------------------\n"
+            f"*Status do Alerta:* {status}\n"
+            f"*ID do Pedido:* `{item.get('order_number')}`\n"
+            f"*Produto:* {item.get('product')}\n"
+            f"*Preço Original:* R$ {item.get('preco_original')}\n"
+            f"*Valor Ajustado:* R$ {item.get('valor_ajuste')}\n"
+            f"*Responsável:* {item.get('analista')}\n"
+            f"*Data/Hora Registro:* {item.get('data_ajuste')}\n"
+            f"--------------------------------------------------"
         )
     }
     requests.post(SLACK_WEBHOOK, json=msg)
