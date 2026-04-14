@@ -1,3 +1,106 @@
+import requests
+import os
+from datetime import datetime, timedelta
+import pytz
+from flask import Flask
+
+app = Flask(__name__)
+
+# ===== CONFIG =====
+METABASE_URL = "https://cayena.metabaseapp.com/public/question/9015cb16-054a-421d-b979-ff20aa139708.json"
+SLACK_WEBHOOK = os.getenv("SLACK_WEBHOOK")
+FUSO = pytz.timezone('America/Sao_Paulo')
+
+ARQUIVO_CACHE = "cache_ids.txt"
+
+# ===== CACHE =====
+def carregar_cache():
+    if not os.path.exists(ARQUIVO_CACHE):
+        return {}
+
+    cache = {}
+    with open(ARQUIVO_CACHE, "r") as f:
+        for linha in f:
+            try:
+                id_, ts = linha.strip().split("|")
+                cache[id_] = datetime.fromisoformat(ts)
+            except:
+                continue
+    return cache
+
+def salvar_cache(cache):
+    with open(ARQUIVO_CACHE, "w") as f:
+        for k, v in cache.items():
+            f.write(f"{k}|{v.isoformat()}\n")
+
+def limpar_cache(cache):
+    agora = datetime.now(FUSO)
+    limite = agora - timedelta(hours=2)
+    return {k: v for k, v in cache.items() if v > limite}
+
+# ===== ROUTE =====
+@app.route('/')
+def home():
+    enviados = executar_bot()
+    return f"Status: OK | Enviados: {enviados} | Hora: {datetime.now(FUSO).strftime('%H:%M:%S')}"
+
+# ===== BOT =====
+def executar_bot():
+    try:
+        res = requests.get(METABASE_URL, timeout=30)
+        res.raise_for_status()
+        dados = res.json()
+
+        # 🔥 ordena do mais novo pro mais antigo
+        dados = sorted(dados, key=lambda x: x.get('data_ajuste', ''), reverse=True)
+
+        agora = datetime.now(FUSO)
+        limite = agora - timedelta(minutes=5)
+
+        cache = carregar_cache()
+        cache = limpar_cache(cache)
+
+        enviados = 0
+
+        for linha in dados:
+            data_str = linha.get('data_ajuste')
+            pedido = linha.get('order_number')
+
+            if not data_str or not pedido:
+                continue
+
+            try:
+                data_crua = datetime.strptime(data_str[:19], "%Y-%m-%dT%H:%M:%S")
+                data_obj = FUSO.localize(data_crua)
+            except:
+                continue
+
+            if data_obj < limite:
+                break
+
+            # 🔥 ID INTELIGENTE (pedido + minuto)
+            id_unico = f"{pedido}_{data_str[:16]}"
+
+            if id_unico in cache:
+                continue
+
+            # 🔥 ignora ajuste sem valor
+            if float(linha.get('valor_ajuste') or 0) == 0:
+                continue
+
+            enviar_slack(linha)
+
+            cache[id_unico] = agora
+            enviados += 1
+
+        salvar_cache(cache)
+        return enviados
+
+    except Exception as e:
+        print("Erro no bot:", e)
+        return 0
+
+# ===== SLACK =====
 def enviar_slack(item):
     try:
         status = str(item.get('status_alerta', 'OK')).upper()
@@ -16,6 +119,7 @@ def enviar_slack(item):
                 f"*Status:* {status}\n"
                 f"*Responsável:* {item.get('analista')}\n"
                 f"*Data:* {item.get('data_ajuste')}\n"
+                f"────────────────────────────"
             )
         }
 
@@ -26,3 +130,8 @@ def enviar_slack(item):
 
     except Exception as e:
         print("Erro ao enviar Slack:", e)
+
+# ===== START =====
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
