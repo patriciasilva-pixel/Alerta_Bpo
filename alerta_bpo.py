@@ -6,7 +6,6 @@ from flask import Flask
 
 app = Flask(__name__)
 
-# --- CONFIGURAÇÕES ---
 METABASE_URL = "https://cayena.metabaseapp.com/public/question/9015cb16-054a-421d-b979-ff20aa139708.json"
 SLACK_WEBHOOK = os.getenv("SLACK_WEBHOOK")
 FUSO = pytz.timezone('America/Sao_Paulo')
@@ -14,31 +13,32 @@ FUSO = pytz.timezone('America/Sao_Paulo')
 @app.route('/')
 def home():
     enviados = executar_bot()
-    return f"Status: OK | Alertas Novos: {enviados} | Check: {datetime.now(FUSO).strftime('%H:%M:%S')}", 200
+    return f"Status: OK | Alertas: {enviados} | Hora Br: {datetime.now(FUSO).strftime('%H:%M:%S')}", 200
 
 def executar_bot():
     try:
-        agora = datetime.now(FUSO)
+        # Pega a hora exata de Brasília agora
+        agora_br = datetime.now(FUSO)
         
-        # Trava de segurança: Só roda no horário de operação (06h às 22h)
-        # Isso evita que o robô gaste todas as horas gratuitas do Render
-        if agora.hour < 6 or agora.hour >= 22:
+        # Trava de horário de operação
+        if agora_br.hour < 6 or agora_br.hour >= 22:
             return 0
 
         res = requests.get(METABASE_URL, timeout=30)
         dados = res.json()
         
         contagem = 0
-        # Janela de 3 minutos para quem roda a cada 2 minutos
-        limite = agora - timedelta(minutes=3)
+        # Aumentei para 5 minutos de janela para dar mais folga
+        limite_br = agora_br - timedelta(minutes=5)
 
         for linha in dados:
             data_str = linha.get('data_ajuste')
             if data_str:
-                data_obj = datetime.strptime(data_str[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=pytz.UTC).astimezone(FUSO)
+                # Converte a data do Metabase (que vem em UTC) diretamente para Brasília
+                data_obj_br = datetime.strptime(data_str[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=pytz.utc).astimezone(FUSO)
                 
-                # Se o ajuste aconteceu agora (nos últimos 3 min)
-                if data_obj > limite:
+                # Compara hora de Brasília com hora de Brasília
+                if data_obj_br > limite_br:
                     enviar_slack(linha)
                     contagem += 1
         return contagem
@@ -48,9 +48,7 @@ def executar_bot():
 
 def enviar_slack(item):
     status = item.get('status_alerta', 'OK').upper()
-    
     header = "*ATENÇÃO: MONITORAMENTO DE AJUSTE CRÍTICO*" if status == 'CRÍTICO' else "*RELATÓRIO DE AJUSTE DE PEDIDO*"
-
     msg = {
         "text": (
             f"{header}\n"
