@@ -13,9 +13,7 @@ FUSO = pytz.timezone('America/Sao_Paulo')
 
 ARQUIVO_CACHE = "cache_ids.txt"
 
-# =========================
-# CACHE
-# =========================
+# ===== CACHE =====
 def carregar_cache():
     if not os.path.exists(ARQUIVO_CACHE):
         return {}
@@ -30,39 +28,37 @@ def carregar_cache():
                 continue
     return cache
 
+
 def salvar_cache(cache):
     with open(ARQUIVO_CACHE, "w") as f:
         for k, v in cache.items():
             f.write(f"{k}|{v.isoformat()}\n")
+
 
 def limpar_cache(cache):
     agora = datetime.now(FUSO)
     limite = agora - timedelta(hours=2)
     return {k: v for k, v in cache.items() if v > limite}
 
-# =========================
-# ROUTE
-# =========================
+
+# ===== ROUTE =====
 @app.route('/')
 def home():
     enviados = executar_bot()
-    return f"Status: OK | Enviados: {enviados} | Hora: {datetime.now(FUSO).strftime('%H:%M:%S')}"
+    return f"OK | enviados: {enviados} | hora: {datetime.now(FUSO).strftime('%H:%M:%S')}"
 
-# =========================
-# BOT
-# =========================
+
+# ===== BOT =====
 def executar_bot():
     try:
         res = requests.get(METABASE_URL, timeout=30)
         dados = res.json()
 
-        # Ordena do mais novo pro mais antigo
+        # Ordena do mais novo para o mais antigo
         dados = sorted(dados, key=lambda x: x.get('data_ajuste', ''), reverse=True)
 
         agora = datetime.now(FUSO)
-
-        # 🔥 Janela inteligente (absorve delay de sistema)
-        limite = agora - timedelta(minutes=15)
+        limite = agora - timedelta(minutes=5)
 
         cache = carregar_cache()
         cache = limpar_cache(cache)
@@ -82,19 +78,19 @@ def executar_bot():
             except:
                 continue
 
-            # Para performance (já ordenado)
+            # Se passou da janela, para (ganho de performance)
             if data_obj < limite:
                 break
 
-            # 🔐 ID único REAL (evento único)
-            id_unico = f"{pedido}_{data_str}"
+            # ID ÚNICO (pedido + timestamp)
+            id_unico = f"{pedido}_{data_str[:19]}"
 
             if id_unico in cache:
                 continue
 
             enviar_slack(linha)
 
-            cache[id_unico] = agora
+            cache[id_unico] = datetime.now(FUSO)
             enviados += 1
 
         salvar_cache(cache)
@@ -105,29 +101,27 @@ def executar_bot():
         print("Erro:", e)
         return 0
 
-# =========================
-# SLACK
-# =========================
+
+# ===== SLACK =====
 def enviar_slack(item):
     status = str(item.get('status_alerta', 'OK')).upper()
 
-    msg = {
-        "text": (
-            f"*Ajuste de Pedido*\n"
-            f"Pedido: `{item.get('order_number')}`\n"
-            f"Produto: {item.get('product')}\n"
-            f"Valor Ajuste: R$ {item.get('valor_ajuste')}\n"
-            f"Status: {status}\n"
-            f"Responsável: {item.get('analista')}\n"
-            f"Data: {item.get('data_ajuste')}"
-        )
-    }
+    mensagem = (
+        "*Ajuste de Pedido*\n"
+        "──────────────────────────────\n"
+        f"Pedido: {item.get('order_number')}\n"
+        f"Produto: {item.get('product')}\n"
+        f"Valor Ajuste: R$ {item.get('valor_ajuste')}\n"
+        f"Status: {status}\n"
+        f"Responsável: {item.get('analista')}\n"
+        f"Data: {item.get('data_ajuste')}\n"
+        "──────────────────────────────"
+    )
 
-    requests.post(SLACK_WEBHOOK, json=msg)
+    requests.post(SLACK_WEBHOOK, json={"text": mensagem})
 
-# =========================
-# START
-# =========================
+
+# ===== START =====
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
