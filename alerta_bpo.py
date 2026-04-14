@@ -6,6 +6,7 @@ from flask import Flask
 
 app = Flask(__name__)
 
+# --- CONFIGURAÇÕES ---
 METABASE_URL = "https://cayena.metabaseapp.com/public/question/9015cb16-054a-421d-b979-ff20aa139708.json"
 SLACK_WEBHOOK = os.getenv("SLACK_WEBHOOK")
 FUSO = pytz.timezone('America/Sao_Paulo')
@@ -13,42 +14,56 @@ FUSO = pytz.timezone('America/Sao_Paulo')
 @app.route('/')
 def home():
     enviados = executar_bot()
-    return f"Status: OK | Alertas: {enviados} | Hora Br: {datetime.now(FUSO).strftime('%H:%M:%S')}", 200
+    return f"Status: OK | Enviados: {enviados} | Hora Br: {datetime.now(FUSO).strftime('%H:%M:%S')}", 200
 
 def executar_bot():
     try:
-        # Pega a hora exata de Brasília agora
-        agora_br = datetime.now(FUSO)
-        
-        # Trava de horário de operação
-        if agora_br.hour < 6 or agora_br.hour >= 22:
-            return 0
-
         res = requests.get(METABASE_URL, timeout=30)
         dados = res.json()
         
+        # 1. ORDENAR: Do mais novo para o mais antigo (Sua ideia)
+        dados = sorted(dados, key=lambda x: x.get('data_ajuste', ''), reverse=True)
+        
         contagem = 0
-        # Aumentei para 5 minutos de janela para dar mais folga
-        limite_br = agora_br - timedelta(minutes=5)
+        agora_br = datetime.now(FUSO)
+        
+        # 2. JANELA DE SEGURANÇA: Aumentei para 10 minutos para o teste inicial
+        limite_br = agora_br - timedelta(minutes=10)
+        
+        ids_processados = set()
 
         for linha in dados:
             data_str = linha.get('data_ajuste')
+            pedido_id = linha.get('order_number')
+
             if data_str:
-                # Converte a data do Metabase (que vem em UTC) diretamente para Brasília
-                data_obj_br = datetime.strptime(data_str[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=pytz.utc).astimezone(FUSO)
+                # 3. TRATAMENTO DE DATA: Forçamos a leitura ignorando o fuso do servidor
+                # Lemos os primeiros 19 caracteres (YYYY-MM-DDTHH:MM:SS)
+                data_crua = datetime.strptime(data_str[:19], "%Y-%m-%dT%H:%M:%S")
                 
-                # Compara hora de Brasília com hora de Brasília
+                # IMPORTANTE: Se o Metabase já envia a hora de Brasília no texto, 
+                # dizemos ao Python que essa hora JÁ É de Brasília.
+                data_obj_br = FUSO.localize(data_crua)
+                
+                # 4. FILTRO DE JANELA
                 if data_obj_br > limite_br:
-                    enviar_slack(linha)
-                    contagem += 1
+                    if pedido_id not in ids_processados:
+                        enviar_slack(linha)
+                        ids_processados.add(pedido_id)
+                        contagem += 1
+                else:
+                    # Como está ordenado, se o primeiro não entrar, os outros também não entrarão
+                    break 
+                    
         return contagem
     except Exception as e:
-        print(f"Erro: {e}")
+        print(f"Erro no bot: {e}")
         return 0
 
 def enviar_slack(item):
-    status = item.get('status_alerta', 'OK').upper()
+    status = str(item.get('status_alerta', 'OK')).upper()
     header = "*ATENÇÃO: MONITORAMENTO DE AJUSTE CRÍTICO*" if status == 'CRÍTICO' else "*RELATÓRIO DE AJUSTE DE PEDIDO*"
+    
     msg = {
         "text": (
             f"{header}\n"
