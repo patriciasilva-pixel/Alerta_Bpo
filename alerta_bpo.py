@@ -28,25 +28,21 @@ def carregar_cache():
                 continue
     return cache
 
-
 def salvar_cache(cache):
     with open(ARQUIVO_CACHE, "w") as f:
         for k, v in cache.items():
             f.write(f"{k}|{v.isoformat()}\n")
-
 
 def limpar_cache(cache):
     agora = datetime.now(FUSO)
     limite = agora - timedelta(hours=2)
     return {k: v for k, v in cache.items() if v > limite}
 
-
 # ===== ROUTE =====
 @app.route('/')
 def home():
     enviados = executar_bot()
     return f"OK | enviados: {enviados} | hora: {datetime.now(FUSO).strftime('%H:%M:%S')}"
-
 
 # ===== BOT =====
 def executar_bot():
@@ -58,7 +54,7 @@ def executar_bot():
         dados = sorted(dados, key=lambda x: x.get('data_ajuste', ''), reverse=True)
 
         agora = datetime.now(FUSO)
-        limite = agora - timedelta(minutes=5)
+        limite = agora - timedelta(minutes=15) # Janela de 15 min para segurança
 
         cache = carregar_cache()
         cache = limpar_cache(cache)
@@ -78,48 +74,46 @@ def executar_bot():
             except:
                 continue
 
-            # Se passou da janela, para (ganho de performance)
             if data_obj < limite:
                 break
 
-            # ID ÚNICO (pedido + timestamp)
-            id_unico = f"{pedido}_{data_str[:19]}"
+            # 🔥 SOLUÇÃO PARA DUPLICADOS:
+            # Usamos apenas o número do pedido como ID. 
+            # Se o pedido já foi enviado nas últimas 2h, ele não repete.
+            id_unico = str(pedido)
 
             if id_unico in cache:
                 continue
 
             enviar_slack(linha)
 
-            cache[id_unico] = datetime.now(FUSO)
+            cache[id_unico] = agora
             enviados += 1
 
         salvar_cache(cache)
-
         return enviados
 
     except Exception as e:
         print("Erro:", e)
         return 0
 
-
 # ===== SLACK =====
 def enviar_slack(item):
     status = str(item.get('status_alerta', 'OK')).upper()
 
     mensagem = (
-        "*Ajuste de Pedido*\n"
+        "*📊 Ajuste de Pedido*\n"
         "──────────────────────────────\n"
-        f"Pedido: {item.get('order_number')}\n"
-        f"Produto: {item.get('product')}\n"
-        f"Valor Ajuste: R$ {item.get('valor_ajuste')}\n"
-        f"Status: {status}\n"
-        f"Responsável: {item.get('analista')}\n"
-        f"Data: {item.get('data_ajuste')}\n"
+        f"*Pedido:* `{item.get('order_number')}`\n"
+        f"*Produto:* {item.get('product')}\n"
+        f"*Valor Ajuste:* R$ {item.get('valor_ajuste')}\n"
+        f"*Status:* {status}\n"
+        f"*Responsável:* {item.get('analista')}\n"
+        f"*Data:* {item.get('data_ajuste')}\n"
         "──────────────────────────────"
     )
 
     requests.post(SLACK_WEBHOOK, json={"text": mensagem})
-
 
 # ===== START =====
 if __name__ == "__main__":
