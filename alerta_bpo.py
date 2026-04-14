@@ -6,7 +6,7 @@ from flask import Flask
 
 app = Flask(__name__)
 
-# CONFIG
+# ===== CONFIG =====
 METABASE_URL = "https://cayena.metabaseapp.com/public/question/9015cb16-054a-421d-b979-ff20aa139708.json"
 SLACK_WEBHOOK = os.getenv("SLACK_WEBHOOK")
 FUSO = pytz.timezone('America/Sao_Paulo')
@@ -34,25 +34,27 @@ def salvar_cache(cache):
             f.write(f"{k}|{v.isoformat()}\n")
 
 def limpar_cache(cache):
-    agora = datetime.now()
-    limite = agora - timedelta(hours=2)  # mantém histórico de 2h
+    agora = datetime.now(FUSO)
+    limite = agora - timedelta(hours=2)
     return {k: v for k, v in cache.items() if v > limite}
 
 # ===== ROUTE =====
 @app.route('/')
 def home():
     enviados = executar_bot()
-    return f"OK | enviados: {enviados}"
+    return f"OK | enviados: {enviados} | hora: {datetime.now(FUSO).strftime('%H:%M:%S')}"
 
 # ===== BOT =====
 def executar_bot():
     try:
         res = requests.get(METABASE_URL, timeout=30)
+        res.raise_for_status()
         dados = res.json()
 
+        # 🔥 ordenar do mais novo para o mais antigo
         dados = sorted(dados, key=lambda x: x.get('data_ajuste', ''), reverse=True)
 
-        agora = datetime.now()
+        agora = datetime.now(FUSO)
         limite = agora - timedelta(minutes=15)
 
         cache = carregar_cache()
@@ -68,6 +70,7 @@ def executar_bot():
                 continue
 
             try:
+                # ✅ NÃO usa timezone (já vem em horário BR)
                 data_obj = datetime.strptime(data_str[:19], "%Y-%m-%dT%H:%M:%S")
             except:
                 continue
@@ -82,33 +85,46 @@ def executar_bot():
 
             enviar_slack(linha)
 
-            cache[id_unico] = datetime.now()
+            cache[id_unico] = datetime.now(FUSO)
             enviados += 1
 
         salvar_cache(cache)
 
+        print(f"Enviados nesta execução: {enviados}")
         return enviados
 
     except Exception as e:
-        print("Erro:", e)
+        print("Erro no bot:", e)
         return 0
 
 # ===== SLACK =====
 def enviar_slack(item):
-    status = str(item.get('status_alerta', 'OK')).upper()
+    try:
+        status = str(item.get('status_alerta', 'OK')).upper()
 
-    msg = {
-        "text": (
-            f"*ALERTA BPO*\n"
-            f"Pedido: {item.get('order_number')}\n"
-            f"Produto: {item.get('product')}\n"
-            f"Ajuste: {item.get('valor_ajuste')}\n"
-            f"Status: {status}\n"
-            f"Data: {item.get('data_ajuste')}"
-        )
-    }
+        header = "*ATENÇÃO: AJUSTE CRÍTICO*" if "CRIT" in status else "*AJUSTE DE PEDIDO*"
 
-    requests.post(SLACK_WEBHOOK, json=msg)
+        msg = {
+            "text": (
+                f"{header}\n"
+                f"----------------------------------\n"
+                f"*Pedido:* {item.get('order_number')}\n"
+                f"*Produto:* {item.get('product')}\n"
+                f"*Ajuste:* R$ {item.get('valor_ajuste')}\n"
+                f"*Status:* {status}\n"
+                f"*Responsável:* {item.get('analista')}\n"
+                f"*Data:* {item.get('data_ajuste')}\n"
+                f"----------------------------------"
+            )
+        }
+
+        response = requests.post(SLACK_WEBHOOK, json=msg, timeout=10)
+
+        if response.status_code != 200:
+            print("Erro Slack:", response.status_code, response.text)
+
+    except Exception as e:
+        print("Erro ao enviar Slack:", e)
 
 # ===== START =====
 if __name__ == "__main__":
