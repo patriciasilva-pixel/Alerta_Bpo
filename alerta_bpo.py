@@ -6,25 +6,26 @@ from flask import Flask
 
 app = Flask(__name__)
 
-# CONFIGURAÇÕES
+# CONFIG
 METABASE_URL = "https://cayena.metabaseapp.com/public/question/9015cb16-054a-421d-b979-ff20aa139708.json"
 SLACK_WEBHOOK = os.getenv("SLACK_WEBHOOK")
 FUSO = pytz.timezone('America/Sao_Paulo')
+
 ARQUIVO_CACHE = "/app/cache_ids.txt"
 
-# ===== GESTÃO DE CACHE (Para evitar duplicados) =====
+# ===== CACHE =====
 def carregar_cache():
     if not os.path.exists(ARQUIVO_CACHE):
         return {}
+
     cache = {}
-    if os.path.exists(ARQUIVO_CACHE):
-        with open(ARQUIVO_CACHE, "r") as f:
-            for linha in f:
-                try:
-                    id_, ts = linha.strip().split("|")
-                    cache[id_] = datetime.fromisoformat(ts)
-                except:
-                    continue
+    with open(ARQUIVO_CACHE, "r") as f:
+        for linha in f:
+            try:
+                id_, ts = linha.strip().split("|")
+                cache[id_] = datetime.fromisoformat(ts)
+            except:
+                continue
     return cache
 
 def salvar_cache(cache):
@@ -37,23 +38,23 @@ def limpar_cache(cache):
     limite = agora - timedelta(hours=2)
     return {k: v for k, v in cache.items() if v > limite}
 
-# ===== ROTA DO FLASK =====
+# ===== ROUTE =====
 @app.route('/')
 def home():
     enviados = executar_bot()
     return f"OK | enviados: {enviados} | hora: {datetime.now(FUSO).strftime('%H:%M:%S')}"
 
-# ===== LÓGICA DO ROBÔ =====
+# ===== BOT =====
 def executar_bot():
     try:
         res = requests.get(METABASE_URL, timeout=30)
         dados = res.json()
 
-        # Ordena do mais antigo para o mais novo
-        dados = sorted(dados, key=lambda x: x.get('data_ajuste', ''))
+        # Ordena do mais novo para o mais antigo
+        dados = sorted(dados, key=lambda x: x.get('data_ajuste', ''), reverse=True)
 
         agora = datetime.now(FUSO)
-        limite = agora - timedelta(minutes=60)
+        limite = agora - timedelta(minutes=60) # Janela de 15 min para segurança
 
         cache = carregar_cache()
         cache = limpar_cache(cache)
@@ -63,8 +64,6 @@ def executar_bot():
         for linha in dados:
             data_str = linha.get('data_ajuste')
             pedido = linha.get('order_number')
-            valor_ajuste = linha.get('valor_ajuste')
-            status_alerta = linha.get('status_alerta', 'OK')
 
             if not data_str or not pedido:
                 continue
@@ -76,9 +75,12 @@ def executar_bot():
                 continue
 
             if data_obj < limite:
-                continue
+                break
 
-            id_unico = f"{pedido}_{valor_ajuste}_{status_alerta}"
+            # 🔥 SOLUÇÃO PARA DUPLICADOS:
+            # Usamos apenas o número do pedido como ID. 
+            # Se o pedido já foi enviado nas últimas 2h, ele não repete.
+            id_unico = str(pedido)
 
             if id_unico in cache:
                 continue
@@ -92,58 +94,28 @@ def executar_bot():
         return enviados
 
     except Exception as e:
-        print("Erro no bot:", e)
+        print("Erro:", e)
         return 0
 
-# ===== ENVIO PARA O SLACK =====
+# ===== SLACK =====
 def enviar_slack(item):
     status = str(item.get('status_alerta', 'OK')).upper()
-    
-    # Preço Original
-    v_original = item.get('preco_original', '0.0')
-    
-    # Tratamento do Valor de Ajuste com o traço --
-    try:
-        v_ajuste_num = float(item.get('valor_ajuste', 0))
-    except:
-        v_ajuste_num = 0
 
-    if v_ajuste_num > 0:
-        texto_ajuste = f"R$ {v_ajuste_num}"
-    else:
-        # Aqui o ajuste solicitado: apenas o traço
-        texto_ajuste = "--"
-
-    # Montagem da Mensagem
     mensagem = (
         "*📊 Ajuste de Pedido*\n"
         "──────────────────────────────\n"
         f"*Pedido:* `{item.get('order_number')}`\n"
         f"*Produto:* {item.get('product')}\n"
-        f"*Preço Original:* R$ {v_original}\n"
-        f"*Valor Ajuste:* {texto_ajuste}\n"
+        f"*Valor Ajuste:* R$ {item.get('valor_ajuste')}\n"
         f"*Status:* {status}\n"
         f"*Responsável:* {item.get('analista')}\n"
         f"*Data:* {item.get('data_ajuste')}\n"
         "──────────────────────────────"
     )
 
-    payload = {"text": mensagem}
-    
-    if status == 'CRÍTICO':
-        payload = {
-            "text": f"🚨 *ALERTA CRÍTICO: {item.get('order_number')}*",
-            "attachments": [
-                {
-                    "color": "#FF0000",
-                    "text": mensagem
-                }
-            ]
-        }
+    requests.post(SLACK_WEBHOOK, json={"text": mensagem})
 
-    requests.post(SLACK_WEBHOOK, json=payload)
-
-# ===== INICIALIZAÇÃO =====
+# ===== START =====
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
