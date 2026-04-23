@@ -105,6 +105,7 @@ def enviar_slack(item):
         "*📊 Ajuste de Pedido*\n"
         "──────────────────────────────\n"
         f"*Pedido:* `{item.get('order_number')}`\n"
+        f"*Fornecedor:* {item.get('fornecedor')}\n"
         f"*Produto:* {item.get('product')}\n"
         f"*Valor Ajuste:* R$ {item.get('valor_ajuste')}\n"
         f"*Status:* {status}\n"
